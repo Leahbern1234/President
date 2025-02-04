@@ -850,8 +850,7 @@ def start_game():
                 current_player = get_next_player(current_player)
             draw_game()
             pygame.time.wait(500)  # Add a small delay for visual clarity
-        
-        
+                
 def can_play_card(card):
     if not played_cards:
         return True
@@ -1136,8 +1135,7 @@ while True:
                 next_player_index = (player_order.index(current_player) + 1) % len(player_order)
                 current_player = player_order[next_player_index]
                 set_message(f"{current_player}'s turn.")
-                
-                
+                             
 # Handle keyboard input for active fields
         if event.type == pygame.KEYDOWN:
             if active_field == 'username':
