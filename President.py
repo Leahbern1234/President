@@ -579,17 +579,17 @@ selected_card = None
 # Function to draw the game
 def draw_game():
     screen.blit(play_background, (0, 0))
-    
+
     # Sort each player's cards using card_sort_key
     for player, cards in hands.items():
         cards.sort(key=card_sort_key)  # Sort cards before displaying
-        
+
         x_offset, y_offset = positions[player]
-        if player != 'User':  
+        if player != 'User':
             player_text = font_reg_small.render(player, True, (255, 255, 255))
             screen.blit(player_text, (x_offset, y_offset))
             y_offset += 40
-        
+
         for card in cards:
             if player == 'User':
                 card_image = deck[card]
@@ -597,37 +597,39 @@ def draw_game():
                     screen.blit(card_image, (x_offset, y_offset - 15))  # Raise the card
                 else:
                     screen.blit(card_image, (x_offset, y_offset))
-                x_offset += overlap_offset  
+                x_offset += overlap_offset
             elif player in ['Player 3', 'Player 4']:
-                card_image = back_card_image_rotated  
+                card_image = back_card_image_rotated
                 screen.blit(card_image, (x_offset, y_offset))
                 y_offset += overlap_offset
             else:
-                card_image = back_card_image  
+                card_image = back_card_image
                 screen.blit(card_image, (x_offset, y_offset))
-                x_offset += overlap_offset  
+                x_offset += overlap_offset
 
-    # Display played cards stacked on top of each other and moved up slightly
-    y_offset = screen_height // 2 - 100  # Move the discard pile up
-    x_offset = screen_width // 2 - 50
+    # Position for the pile of played cards at the center and slightly upward
+    center_x = screen_width // 2 - card_size[0] // 2
+    center_y = screen_height // 2 - card_size[1] // 2 - 50  # Adjusted y offset for visual appeal
 
-    # Ensure the 3 of clubs stays at the bottom of the pile if it has been played
+    # Draw stacks of played cards directly on top of each other at the center
     if three_of_clubs_played:
+        # Draw the 3 of clubs
         card_image = deck['3_of_clubs']
-        screen.blit(card_image, (x_offset, y_offset))
+        screen.blit(card_image, (center_x, center_y))
 
+    # Draw the rest of the played cards stacked on top of each other
     for card in played_cards:
-        if card != '3_of_clubs':  # Skip the 3 of clubs as it is already drawn
+        if card != '3_of_clubs' or not three_of_clubs_played:  # Only show if not the 3 of clubs already shown
             card_image = deck[card]
-            screen.blit(card_image, (x_offset, y_offset))
-            
+            screen.blit(card_image, (center_x, center_y))  # Draw this card in the same center position
+
     # Button Logic
     button_rect = pygame.Rect(screen_width // 2 - 60, screen_height - 330, 80, 40)
     if selected_card:
         button_text = font_bold_small.render('Play', True, (255, 255, 255))
     else:
         button_text = font_bold_small.render('Pass', True, (255, 255, 255))
-    
+
     pygame.draw.rect(screen, (128, 128, 128), button_rect)
     text_width, text_height = button_text.get_size()
     text_x = button_rect.x + (button_rect.width - text_width) // 2
@@ -638,32 +640,48 @@ def draw_game():
     if current_message:
         message_surface = font_reg_small.render(current_message, True, (0, 0, 0))
         screen.blit(message_surface, (screen_width // 2 - message_surface.get_width() // 2, screen_height - 250))
-        
+
     pygame.display.flip()
     
 # Function to animate a card to the center of the screen
 def animate_card_to_center(card):
-    card_image = deck[card]
+    global played_cards, hands
+    card_image = deck[card]  # Get the correct card image
     x_start, y_start = positions['User']  # Starting position of the card
-    x_end, y_end = screen.get_width() // 2 - card_size[0] // 2, screen.get_height() // 2 - card_size[1] // 2 - 100  # Move up slightly
+    x_end, y_end = screen.get_width() // 2 - card_size[0] // 2, screen_height // 2 - card_size[1] // 2 - 100  # Move up slightly
 
     # Animate the card to the center of the screen
     for i in range(20):  # Number of frames for the animation
         x = x_start + (x_end - x_start) * i / 20
         y = y_start + (y_end - y_start) * i / 20
 
-        # Clear the screen and redraw
-        screen.blit(game_background, (0, 0))
-        draw_game()
-        screen.blit(card_image, (x, y))  
-        pygame.display.update()
+        # Instead of clearing the whole screen, just clear the path of the moving card
+        # This assumes the card's path doesn't overlap with other game elements significantly
+        screen.blit(game_background, (x, y, card_size[0], card_size[1]))  # Clear only the card's new position
+        
+        draw_game()  # Redraw the current game state, including all cards in their positions
+        
+        screen.blit(card_image, (x, y))  # Draw the moving card on top
+        
+        pygame.display.update()  # Update just the changed part
         pygame.time.wait(50)  # Control animation speed
 
+    # After animation, add the card to played_cards without removing from the hand visually until confirmed played
+    if card in hands['User']:
+        hands['User'].remove(card)  # Remove from hand
+    played_cards.append(card)  # Add to played cards
+    
+    # Redraw everything to ensure all elements are in their final state
+    draw_game()
+    
 # Global variable to track the number of consecutive passes
 pass_count = 0
 
 # Function to get the next player in the order
 def get_next_player(current_player):
+    if current_player not in player_order:
+        raise ValueError(f"{current_player} is not in player order: {player_order}")
+    
     next_player_index = (player_order.index(current_player) + 1) % len(player_order)
     return player_order[next_player_index]
 
@@ -671,32 +689,31 @@ def handle_mouse_click(pos, hands):
     global selected_card, played_cards, current_message, pass_count, current_player
     
     if current_player == 'User':  # Only allow clicking if it's the user's turn
-        # Check for button click first
+        # Check for the button click first
         button_rect = pygame.Rect(screen_width // 2 - 60, screen_height - 330, 80, 40)
         if button_rect.collidepoint(pos):
             if selected_card:  # If a card is selected, this is a "Play" button
                 if can_play_card(selected_card):
-                    # Play the card
-                    animate_card_to_center(selected_card)
-                    hands['User'].remove(selected_card)
-                    played_cards.append(selected_card)
+                    animate_card_to_center(selected_card)  # Animate the card to the center
                     current_message = f"User played {selected_card}!"
-                    selected_card = None  # Reset selected card after playing
-                    pass_count = 0  # Reset pass count when a card is played
-                    if selected_card and ('2' in selected_card or 'joker' in selected_card or len(played_cards) == 4):
+                    
+                    # Check for conditions to end the round
+                    if len(played_cards) == 4:
                         end_round()
+                    
+                    # Reset selected card and pass count
+                    selected_card = None
+                    pass_count = 0
                     return True  # User's turn is complete
                 else:
-                    current_message = f"Cannot play {selected_card}. It must be of a higher value than the current card."
-                    pygame.display.flip()  # Update the display
-                    pygame.time.wait(1500)  # Show error message for 1.5 seconds
+                    current_message = f"Cannot play {selected_card}. It must be of the same value or higher than the current card."
+                    pygame.display.flip()
+                    pygame.time.wait(1500)
                 selected_card = None  # Reset the selection
             else:  # If no card is selected, this is a "Pass" button
                 pass_count += 1
                 current_message = "User passed."
                 if pass_count >= len(player_order) - 1:
-                    played_cards = []  # Clear the played cards if all players pass
-                    pass_count = 0
                     end_round()
                 return True  # User's turn is complete
             draw_game()  # Redraw to update the display
@@ -731,27 +748,28 @@ three_of_clubs_played = False
 def animate_three_of_clubs_to_center():
     global current_player, player_order, three_of_clubs_played
     card_image = deck['3_of_clubs']
-    x_start = positions[current_player][0]  # Current player position
-    y_start = positions[current_player][1]  # Current player position
-    x_end, y_end = screen.get_width() // 2 - card_size[0] // 2, screen.get_height() // 2 - card_size[1] // 2 - 50  # Move up slightly
+    x_start, y_start = positions[current_player]
+    x_end, y_end = screen.get_width() // 2 - card_size[0] // 2, screen.get_height() // 2 - card_size[1] // 2 - 50
 
-    for i in range(20):  # Number of frames for the animation
+    for i in range(20):
         x = x_start + (x_end - x_start) * i / 20
         y = y_start + (y_end - y_start) * i / 20
 
+        # Clear just the path of the card using game background
         screen.blit(game_background, (0, 0))
-        draw_game()  # Redraw the game state
-        screen.blit(card_image, (x, y))  # Render the card in its new position
+        
+        # Redraw the game state
+        draw_game()
+        
+        # Now draw the card temporarily in the animation
+        screen.blit(card_image, (x, y))  # Draw the card moving to the center
         pygame.display.update()
-        pygame.time.wait(50)  # Control the animation speed
+        pygame.time.wait(50)
 
-    # Check if the current player has the 3 of clubs before removing it
-    if '3_of_clubs' in hands[current_player]:
-        hands[current_player].remove('3_of_clubs')
-        played_cards.append('3_of_clubs')  # Keep track of played cards
-        three_of_clubs_played = True  # Set the flag to indicate the 3 of clubs has been played
-
-    # Set the next player in clockwise order
+    # After the animation, ensure the 3 of clubs stays in the center
+    played_cards.append('3_of_clubs')  # Add it to the played cards list
+    three_of_clubs_played = True  # Mark that the card has been played
+    draw_game()  # Redraw the final game state
     current_player = get_next_player(current_player)
     set_message(f"{current_player}'s turn.")
     
@@ -850,14 +868,30 @@ def start_game():
                 current_player = get_next_player(current_player)
             draw_game()
             pygame.time.wait(500)  # Add a small delay for visual clarity
-                
+            
 def can_play_card(card):
     if not played_cards:
         return True
+        
     last_played = played_cards[-1]
-    if isinstance(last_played, list):
-        return card_sort_key(card) >= card_sort_key(last_played[0])  
-    return card_sort_key(card) >= card_sort_key(last_played)  
+    
+    # Extract ranks from card names
+    def get_rank(card_name):
+        # Handle jokers first
+        if 'joker' in card_name:
+            return 'joker'
+        # Extract the first part of the card name before '_of_'
+        return card_name.split('_')[0]
+    
+    current_rank = get_rank(card)
+    last_rank = get_rank(last_played)
+    
+    # Allow same rank or higher rank
+    if current_rank == last_rank:  # Same rank is allowed
+        return True
+    
+    # Otherwise check if current card is higher
+    return card_sort_key(card) >= card_sort_key(last_played)
         
 def play_card(player, cards):
     global current_player, played_cards, player_order, player_roles, pass_count
