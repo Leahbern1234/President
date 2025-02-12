@@ -680,8 +680,13 @@ pass_count = 0
 # Function to get the next player in the order
 def get_next_player(current_player):
     if current_player not in player_order:
-        raise ValueError(f"{current_player} is not in player order: {player_order}")
-    
+        # Find first available player if current_player is not in list
+        remaining_players = [player for player in player_order if player != current_player]
+        if remaining_players:
+            return remaining_players[0]  # Return the first available current player
+        else:
+            return None  # All players are eliminated
+
     next_player_index = (player_order.index(current_player) + 1) % len(player_order)
     return player_order[next_player_index]
 
@@ -799,19 +804,39 @@ def ai_play(player):
         pass_count = 0
     else:
         last_played = played_cards[-1]
-        valid_cards = [card for card in hands[player] if card_sort_key(card) > card_sort_key(last_played)]
-        if valid_cards:
-            card_to_play = min(valid_cards, key=card_sort_key)
+        last_rank = last_played.split('_')[0]
+        
+        if last_rank == '2' or 'joker' in last_played:
+            # After a 2 or joker, AI can play any card
+            # Strategy: Play the lowest valid card that's not a 2 or joker
+            non_power_cards = [card for card in hands[player] 
+                             if '2' not in card.split('_')[0] and 'joker' not in card]
+            
+            if non_power_cards:
+                # Play the lowest non-power card
+                card_to_play = min(non_power_cards, key=card_sort_key)
+            else:
+                # If only power cards remain, play the lowest card
+                card_to_play = min(hands[player], key=card_sort_key)
+                
             hands[player].remove(card_to_play)
             played_cards.append(card_to_play)
-            current_message = f"{player} played {card_to_play}."
+            current_message = f"{player} played {card_to_play} after a 2/joker."
             pass_count = 0
         else:
-            current_message = f"{player} passed."
-            pass_count += 1
-            if pass_count >= len(player_order) - 1:
-                played_cards = []  # Clear the played cards if all players pass
+            # Normal play - find valid cards that can be played
+            valid_cards = [card for card in hands[player] if card_sort_key(card) > card_sort_key(last_played)]
+            if valid_cards:
+                card_to_play = min(valid_cards, key=card_sort_key)
+                hands[player].remove(card_to_play)
+                played_cards.append(card_to_play)
+                current_message = f"{player} played {card_to_play}."
                 pass_count = 0
+            else:
+                current_message = f"{player} passed."
+                pass_count += 1
+                if pass_count >= len(player_order) - 1:
+                    pass_count = 0
 
     # Check if the player has won
     if not hands[player]:
@@ -829,12 +854,16 @@ def start_game():
     global user_id, game_started, hands, current_player, played_cards, player_roles, selected_cards, pass_count
     if 'user_id' not in globals():
         user_id = GUEST_USER_ID
+        
     save_game_preferences(user_id, rounds, selected_difficulty)
-    
+
     hands = deal_deck()
     current_player = player_with_three_of_clubs(hands)
+    
     if current_player:
         animate_three_of_clubs_to_center()
+    else:
+        current_player = player_order[0]  # Default to start with the first player
 
     game_started = True
     played_cards = []
@@ -860,20 +889,29 @@ def start_game():
                         turn_completed = handle_mouse_click(mouse_pos, hands)
                         if turn_completed:
                             current_player = get_next_player(current_player)
-                draw_game()
-                clock.tick(30)
+
         else:
-            # AI turn
+            # AIs play only if they have cards
             if ai_play(current_player):
-                current_player = get_next_player(current_player)
+                # Check if the current player was removed from the game
+                if current_player not in player_order:
+                    current_player = get_next_player(current_player)  # Find next player
+                else:
+                    current_player = get_next_player(current_player)  # Ensure to get the next player correctly
+
             draw_game()
-            pygame.time.wait(500)  # Add a small delay for visual clarity
+            pygame.time.wait(500)  # Add a small delay for visual clarity 
             
 def can_play_card(card):
     if not played_cards:
         return True
         
     last_played = played_cards[-1]
+    
+    # Check if last card was a 2 or joker - allow any card to be played
+    last_rank = last_played.split('_')[0]
+    if last_rank == '2' or 'joker' in last_played:
+        return True  # Any player can play any card
     
     # Extract ranks from card names
     def get_rank(card_name):
@@ -892,9 +930,67 @@ def can_play_card(card):
     
     # Otherwise check if current card is higher
     return card_sort_key(card) >= card_sort_key(last_played)
+
+def handle_two_or_joker_next_turn(next_player):
+    global played_cards, hands, current_message
+    
+    if not hands[next_player]:  # Check if player has cards
+        return False
+    
+    # If Player 4 played a 2 or joker and next player is User, don't force lowest card
+    if next_player == 'User':
+        last_player = player_order[(player_order.index('User') - 1) % len(player_order)]
+        if last_player == 'Player 4':
+            current_message = "Player 4 cleared the deck with a 2 or joker. You can play any card!"
+            return False
+    
+    # For all other cases, force lowest card
+    lowest_card = min(hands[next_player], key=card_sort_key)
+    hands[next_player].remove(lowest_card)
+    played_cards.append(lowest_card)
+    current_message = f"{next_player} must play their lowest card: {lowest_card}"
+    
+    # Check if player has won after playing their lowest card
+    if not hands[next_player]:
+        player_roles[next_player] = len(player_roles) + 1
+        player_order.remove(next_player)
+        if len(player_order) == 1:
+            player_roles[player_order[0]] = len(player_roles) + 1
+            end_round()
+            return True
+    return False
         
 def play_card(player, cards):
     global current_player, played_cards, player_order, player_roles, pass_count
+
+    # Check if last card was a 2 or joker
+    if played_cards:
+        last_played = played_cards[-1]
+        last_rank = last_played.split('_')[0]
+        if last_rank == '2' or 'joker' in last_played:
+            # After a 2 or joker, any card can be played
+            played_cards.append(cards)
+            for card in cards:
+                hands[player].remove(card)
+            current_message = f"{player} played {cards} after a 2/joker."
+            
+            # Check for win condition
+            if not hands[player]:
+                player_roles[player] = len(player_roles) + 1
+                player_order.remove(player)
+                current_message += f" {player} has won!"
+                
+                # Check if only one player remains
+                if len(player_order) == 1:
+                    player_roles[player_order[0]] = len(player_roles) + 1
+                    end_round()
+                    return True
+                    
+            current_player = get_next_player(player)
+            set_message(f"{current_player}'s turn.")
+            return False
+    
+    # Normal play logic
     if not played_cards or (len(cards) == len(played_cards[-1]) and card_sort_key(cards[0]) >= card_sort_key(played_cards[-1][0])):
         played_cards.append(cards)
         for card in cards:
@@ -904,27 +1000,19 @@ def play_card(player, cards):
         if not hands[player]:
             player_roles[player] = len(player_roles) + 1
             player_order.remove(player)
+            current_message += f" {player} has won!"
+            
+            # Check if only one player remains
             if len(player_order) == 1:
                 player_roles[player_order[0]] = len(player_roles) + 1
                 end_round()
-                return True  # Indicate that the game has ended
+                return True
         
-        # Check if a two or a joker is played to end the round
-        if '2' in cards[0] or 'joker' in cards[0]:
-            end_round()
-            return False  # Indicate that the round has ended
-        
-        # Check if a four of a kind is played to clear the pile
-        if len(cards) == 4 and all(card_sort_key(card) == card_sort_key(cards[0]) for card in cards):
-            played_cards = []
-            set_message(f"{player} cleared the pile with four of a kind!")
-            return False  # Indicate that the round has ended
-
-        # Move to the next player
-        current_player = get_next_player(current_player)
+        current_player = get_next_player(player)  # Get the next player after playing
         set_message(f"{current_player}'s turn.")
-    
-    return False  # Indicate that the game continues
+        return False  # Game continues
+
+    return False  # Invalid play
 
 def end_round():
     global current_player, played_cards, player_order, player_roles
