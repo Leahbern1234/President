@@ -742,7 +742,7 @@ def handle_mouse_click(pos, hands):
         button_rect = pygame.Rect(screen_width // 2 - 60, screen_height - 330, 80, 40)
         if button_rect.collidepoint(pos):
             if selected_card:  # If a card is selected, this is a "Play" button
-                if can_play_card(selected_card):
+                if can_play_card(selected_card) or (played_cards and (played_cards[-1].split('_')[0] == '2' or 'joker' in played_cards[-1])):
                     animate_card_to_center(selected_card)  # Animate the card to the center
                     current_message = f"User played {selected_card}!"
                     
@@ -763,6 +763,8 @@ def handle_mouse_click(pos, hands):
                             rank = assign_rank(last_player)
                             player_roles[last_player] = rank
                             end_round()
+                        else:
+                            current_message = f"{get_next_player(current_player)}'s turn. Play any card."
                         return True
                     
                     # Reset selected card and pass count
@@ -770,7 +772,7 @@ def handle_mouse_click(pos, hands):
                     pass_count = 0
                     return True  # User's turn is complete
                 else:
-                    current_message = f"Cannot play {selected_card}. It must be of the same value or higher than the current card, or all must have passed."
+                    current_message = f"Cannot play {selected_card}. It must be of the same value or higher than the current card."
                     pygame.display.flip()
                     pygame.time.wait(1500)
                 selected_card = None  # Reset the selection
@@ -841,26 +843,45 @@ def animate_three_of_clubs_to_center():
 def ai_play(player):
     global played_cards, hands, player_order, current_message, pass_count, current_player
     
-    # Add a delay for visual clarity
     pygame.time.wait(1000)  
 
-    # Safety check to ensure the correct player is playing
     if player != current_player:
         return False
 
-    card_to_play = None
-
-    # Check if player has any cards left
     if not hands[player]:
         current_message = f"{player} has no cards left."
         return True
 
-    if not played_cards or pass_count >= len(player_order) - 1:
-        # If all have passed, play any card or start a new round with the lowest card
-        card_to_play = min(hands[player], key=card_sort_key)  # Play the lowest card
+    # If all other players have passed, the last player who played gets to play any card
+    if pass_count >= len(player_order) - 1:
+        if hands[player]:  # Make sure player still has cards
+            card_to_play = min(hands[player], key=card_sort_key)  # Play lowest card
+            hands[player].remove(card_to_play)
+            played_cards.append(card_to_play)
+            current_message = f"{player} played {card_to_play} after all passed."
+            pass_count = 0  # Reset pass count
+            
+            # Check for win condition after playing
+            if not hands[player]:
+                rank = assign_rank(player)
+                player_roles[player] = rank
+                if player in player_order:
+                    player_order.remove(player)
+                if len(player_order) == 1:
+                    last_player = player_order[0]
+                    rank = assign_rank(last_player)
+                    player_roles[last_player] = rank
+                    end_round()
+                else:
+                    current_message = f"{get_next_player(current_player)}'s turn. Play any card."
+            return True
+    
+    # Normal play logic when not all players have passed
+    if not played_cards:  # If no cards played yet
+        card_to_play = min(hands[player], key=card_sort_key)
         hands[player].remove(card_to_play)
         played_cards.append(card_to_play)
-        current_message = f"{player} played {card_to_play} after all passed." if pass_count > 0 else f"{player} played {card_to_play}."
+        current_message = f"{player} played {card_to_play}."
         pass_count = 0
     else:
         last_played = played_cards[-1]
@@ -868,16 +889,16 @@ def ai_play(player):
         
         if last_rank == '2' or 'joker' in last_played:
             # After a 2 or joker, AI can play any card
-            card_to_play = min(hands[player], key=card_sort_key)  # Play the lowest card
+            card_to_play = min(hands[player], key=card_sort_key)
             hands[player].remove(card_to_play)
             played_cards.append(card_to_play)
             current_message = f"{player} played {card_to_play} after a 2/joker."
             pass_count = 0
         else:
-            # Normal play - find valid cards that can be played
+            # Find valid cards that can be played
             valid_cards = [card for card in hands[player] if can_play_card(card)]
             if valid_cards:
-                card_to_play = min(valid_cards, key=card_sort_key)  # Play the lowest valid card
+                card_to_play = min(valid_cards, key=card_sort_key)
                 hands[player].remove(card_to_play)
                 played_cards.append(card_to_play)
                 current_message = f"{player} played {card_to_play}."
@@ -885,53 +906,50 @@ def ai_play(player):
             else:
                 current_message = f"{player} passed."
                 pass_count += 1
-                if pass_count >= len(player_order) - 1:
-                    pass_count = 0
-                    current_message = f"All players passed. {player} can play any card."
-                    return True  # AI's turn is complete
+                return True
 
-    draw_game()  # Update the display after the first play
+    draw_game()
 
     # Check if the played card was a 2 or Joker
-    if card_to_play and (card_to_play.split('_')[0] == '2' or 'joker' in card_to_play):
-        pygame.time.wait(1000)  # Add delay for visual clarity
+    if 'card_to_play' in locals() and (card_to_play.split('_')[0] == '2' or 'joker' in card_to_play):
+        pygame.time.wait(1000)
         
-        # Same AI player gets to play any card from their hand
-        if hands[player]:  # Check if AI still has cards
+        if hands[player]:
             next_card = min(hands[player], key=card_sort_key)
             hands[player].remove(next_card)
             played_cards.append(next_card)
             current_message = f"{player} played {next_card} after their 2/Joker!"
-            draw_game()  # Update the display after the second play
+            draw_game()
             
-            # Check if AI has won after the second play
             if not hands[player]:
                 rank = assign_rank(player)
                 player_roles[player] = rank
-                player_order.remove(player)
+                if player in player_order:
+                    player_order.remove(player)
                 if len(player_order) == 1:
                     last_player = player_order[0]
                     rank = assign_rank(last_player)
                     player_roles[last_player] = rank
                     end_round()
+                else:
+                    current_message = f"{get_next_player(current_player)}'s turn. Play any card."
         
-        pygame.time.wait(1000)  # Add delay after the second play
-        return True  # AI's turn is complete
-
-    # Check if the player has won
+        pygame.time.wait(1000)
+    
+    # Check for win condition
     if not hands[player]:
         rank = assign_rank(player)
         player_roles[player] = rank
-        player_order.remove(player)
+        if player in player_order:
+            player_order.remove(player)
         if len(player_order) == 1:
-            # Last player automatically becomes the Bum
             last_player = player_order[0]
             rank = assign_rank(last_player)
             player_roles[last_player] = rank
             end_round()
-            return True
-
-    # Return True to indicate the turn is complete
+        else:
+            current_message = f"{get_next_player(current_player)}'s turn. Play any card."
+            
     return True
 
 def start_game():
@@ -987,32 +1005,33 @@ def start_game():
             pygame.time.wait(500)  # Add a small delay for visual clarity 
             
 def can_play_card(card):
-    global played_cards, pass_count
-    
-    if not played_cards or pass_count >= len(player_order) - 1:
-        return True  # No card has been played or all others have passed, any card can be played
-    
+    if not played_cards:  # If no cards have been played yet
+        return True
+        
     last_played = played_cards[-1]
+    
+    # Get the ranks of the cards
+    current_rank = card.split('_')[0]
     last_rank = last_played.split('_')[0]
     
-    if last_rank == '2' or 'joker' in last_played:
-        return True  # Any card can be played after a 2 or joker
-    
-    # Extract ranks from card names
-    def get_rank(card_name):
-        # Handle jokers first
-        if 'joker' in card_name:
-            return 'joker'
-        # Extract the first part of the card name before '_of_'
-        return card_name.split('_')[0]
-    
-    current_rank = get_rank(card)
-    last_rank = get_rank(last_played)
-    
-    # Check if the current card can be played over the last played card
-    if card_sort_key(card) >= card_sort_key(last_played):
+    # Handle jokers (they can be played on anything)
+    if 'joker' in card:
         return True
-    return False
+        
+    # Handle playing on jokers (only 2s can be played on jokers)
+    if 'joker' in last_played:
+        return current_rank == '2'
+        
+    # Handle 2s (can be played on anything except jokers)
+    if current_rank == '2':
+        return True
+        
+    # Get the numerical values of the ranks for comparison
+    current_value = card_order.get(current_rank, 0)
+    last_value = card_order.get(last_rank, 0)
+    
+    # Allow cards of the same rank or higher
+    return current_value >= last_value
 
 def handle_two_or_joker_next_turn(player):
     global played_cards, hands, current_message, current_player, selected_card, pass_count
