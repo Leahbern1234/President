@@ -7,11 +7,13 @@ from sys import exit
 import pygame_menu as pm
 import pygame_menu.baseimage 
 from pygame_menu.baseimage import BaseImage
-pygame.init()
 
 import hashlib
 
 import random
+
+pygame.init()
+pygame.display.init()  # Explicitly initialize the display module
 
 # Connecting to the database
 def dict_factor(cursor, row):
@@ -419,12 +421,6 @@ rounds = 5
 difficulty_options = [("Easy", "Easy"), ("Medium", "Medium"), ("Hard", "Hard")]
 selected_difficulty = difficulty_options[1][1]  # Default to "Medium"
 rounds_label = None
-game_started = False
-hands = None
-played_cards = []  # Store played cards
-card_deck = []  # Store the shuffled deck
-selected_cards = []  # Track selected cards
-
 
 # Load and resize the play icon using BaseImage
 play2_icon_image = BaseImage(image_path='Images/play2.png', drawing_mode=pygame_menu.baseimage.IMAGE_MODE_FILL)
@@ -471,6 +467,18 @@ def save_game_preferences(user_id, rounds, ai_difficulty):
 
     conn.commit()  
     return "Game preferences saved successfully."
+
+# Global variables
+rounds_played = 0
+player_roles = {}
+game_started = False
+hands = None
+played_cards = []
+selected_cards = []
+pass_count = 0
+current_player = None
+three_of_clubs_played = False
+last_player_finished = False
 
 # List of card names
 card_names = [
@@ -708,6 +716,7 @@ def show_rank_message(player, rank):
     pygame.time.wait(2000)
 
 def assign_rank(player):
+    global player_roles
     ranks = {
         1: "President",
         2: "Vice President",
@@ -716,73 +725,92 @@ def assign_rank(player):
         5: "Bum"
     }
     
+    # Check if the player already has a role assigned
+    if player in player_roles:
+        return player_roles[player]
+    
+    # Determine the next available rank
     rank_number = len(player_roles) + 1
+    if rank_number > len(ranks):
+        rank_number = len(ranks)  # Ensure we don't exceed available ranks
+    
     rank = ranks[rank_number]
+    player_roles[player] = rank
     show_rank_message(player, rank)
     return rank
 
-# Function to get the next player in the order
-def get_next_player(current_player):
-    if current_player not in player_order:
-        # Find first available player if current_player is not in list
-        remaining_players = [player for player in player_order if player != current_player]
-        if remaining_players:
-            return remaining_players[0]  # Return the first available current player
-        else:
-            return None  # All players are eliminated
+last_player_finished = False  # Add this global variable
 
-    next_player_index = (player_order.index(current_player) + 1) % len(player_order)
-    return player_order[next_player_index]
+def get_next_player(current_player):
+    global last_player_finished, player_order
+    
+    if current_player not in player_order:
+        current_player = player_order[0] if player_order else None
+    
+    while current_player in player_order:
+        current_index = player_order.index(current_player)
+        next_index = (current_index + 1) % len(player_order)
+        next_player = player_order[next_index]
+        
+        if not hands[next_player]:  # Check if the next player has no cards
+            rank = assign_rank(next_player)
+            player_order.remove(next_player)
+            last_player_finished = True
+            if not player_order:
+                return None  # No more players left
+        else:
+            return next_player  # Return the first player with cards left
+    
+    return None  # If no players are left with cards
 
 def handle_mouse_click(pos, hands):
-    global selected_card, played_cards, current_message, pass_count, current_player
+    global selected_card, played_cards, current_message, pass_count, current_player, last_player_finished
     
     if current_player == 'User':  # Only allow clicking if it's the user's turn
         # Check for the button click first
         button_rect = pygame.Rect(screen_width // 2 - 60, screen_height - 330, 80, 40)
         if button_rect.collidepoint(pos):
             if selected_card:  # If a card is selected, this is a "Play" button
-                if can_play_card(selected_card) or (played_cards and (played_cards[-1].split('_')[0] == '2' or 'joker' in played_cards[-1])):
+                if can_play_card(selected_card) or last_player_finished:
                     animate_card_to_center(selected_card)  # Animate the card to the center
                     current_message = f"User played {selected_card}!"
                     
                     # Check if the played card was a 2 or Joker
                     if selected_card.split('_')[0] == '2' or 'joker' in selected_card:
+                        pygame.display.flip()  # Update the display
+                        pygame.time.wait(500)  # Wait a moment
+                        current_message = "Play any card from your hand!"  # Now show this message
                         selected_card = None
-                        current_message = "Play any card from your hand!"
                         return False  # Keep user's turn
                     
                     # Check if user has won after playing the card
                     if not hands['User']:
                         rank = assign_rank('User')
                         player_roles['User'] = rank
-                        player_order.remove('User')
-                        if len(player_order) == 1:
-                            # Last player automatically becomes the Bum
-                            last_player = player_order[0]
-                            rank = assign_rank(last_player)
-                            player_roles[last_player] = rank
+                        if 'User' in player_order:
+                            player_order.remove('User')
+                        if not player_order:
                             end_round()
                         else:
-                            current_message = f"{get_next_player(current_player)}'s turn. Play any card."
-                        return True
+                            return True
                     
-                    # Reset selected card and pass count
+                    # Reset selected card and pass count for normal play
                     selected_card = None
                     pass_count = 0
-                    return True  # User's turn is complete
+                    last_player_finished = False  # Reset the flag after the next player plays
+                    return True  # Signal turn change
                 else:
                     current_message = f"Cannot play {selected_card}. It must be of the same value or higher than the current card."
                     pygame.display.flip()
                     pygame.time.wait(1500)
-                selected_card = None  # Reset the selection
+                    selected_card = None  # Reset the selection
             else:  # If no card is selected, this is a "Pass" button
                 pass_count += 1
                 current_message = "User passed."
                 if pass_count >= len(player_order) - 1:
                     pass_count = 0
                     current_message = "All players passed. You can play any card."
-                return True  # User's turn is complete
+                return True  # Signal turn change
             draw_game()  # Redraw to update the display
             return False
 
@@ -813,7 +841,7 @@ def player_with_three_of_clubs(hands):
 three_of_clubs_played = False
 
 def animate_three_of_clubs_to_center():
-    global current_player, player_order, three_of_clubs_played
+    global current_player, player_order, three_of_clubs_played, hands
     card_image = deck['3_of_clubs']
     x_start, y_start = positions[current_player]
     x_end, y_end = screen.get_width() // 2 - card_size[0] // 2, screen.get_height() // 2 - card_size[1] // 2 - 50
@@ -836,12 +864,13 @@ def animate_three_of_clubs_to_center():
     # After the animation, ensure the 3 of clubs stays in the center
     played_cards.append('3_of_clubs')  # Add it to the played cards list
     three_of_clubs_played = True  # Mark that the card has been played
+    hands[current_player].remove('3_of_clubs')  # Remove the 3 of clubs from the player's hand
     draw_game()  # Redraw the final game state
     current_player = get_next_player(current_player)
     set_message(f"{current_player}'s turn.")
     
 def ai_play(player):
-    global played_cards, hands, player_order, current_message, pass_count, current_player
+    global played_cards, hands, player_order, current_message, pass_count, current_player, last_player_finished
     
     pygame.time.wait(1000)  
 
@@ -865,6 +894,7 @@ def ai_play(player):
             if not hands[player]:
                 rank = assign_rank(player)
                 player_roles[player] = rank
+                last_player_finished = True  # Set the flag when AI finishes
                 if player in player_order:
                     player_order.remove(player)
                 if len(player_order) == 1:
@@ -924,6 +954,7 @@ def ai_play(player):
             if not hands[player]:
                 rank = assign_rank(player)
                 player_roles[player] = rank
+                last_player_finished = True  # Set the flag when AI finishes after playing 2/Joker
                 if player in player_order:
                     player_order.remove(player)
                 if len(player_order) == 1:
@@ -940,6 +971,7 @@ def ai_play(player):
     if not hands[player]:
         rank = assign_rank(player)
         player_roles[player] = rank
+        last_player_finished = True  # Set the flag when AI finishes
         if player in player_order:
             player_order.remove(player)
         if len(player_order) == 1:
@@ -953,27 +985,20 @@ def ai_play(player):
     return True
 
 def start_game():
-    global user_id, game_started, hands, current_player, played_cards, player_roles, selected_cards, pass_count
+    global user_id, game_started, hands, current_player, played_cards, player_roles, selected_cards, pass_count, rounds_played, show_menu, three_of_clubs_played
+    
     if 'user_id' not in globals():
         user_id = GUEST_USER_ID
         
     save_game_preferences(user_id, rounds, selected_difficulty)
 
-    hands = deal_deck()
-    current_player = player_with_three_of_clubs(hands)
-    
-    if current_player:
-        animate_three_of_clubs_to_center()
-    else:
-        current_player = player_order[0]  # Default to start with the first player
-
+    rounds_played = 0  # Reset rounds played at the start of the game
     game_started = True
-    played_cards = []
-    player_roles = {}
-    selected_cards = []
-    pass_count = 0
+
+    # Start the first round
+    start_new_round()
     
-    while game_started:
+    while game_started and rounds_played < rounds:
         set_message(f"{current_player}'s turn.")
         pygame.display.set_caption("Game")
         draw_game()
@@ -990,46 +1015,61 @@ def start_game():
                         mouse_pos = pygame.mouse.get_pos()
                         turn_completed = handle_mouse_click(mouse_pos, hands)
                         if turn_completed:
-                            current_player = get_next_player(current_player)
+                            current_player = get_next_player(current_player)  # Update player only when turn is confirmed complete
 
         else:
-            # AIs play only if they have cards
-            if ai_play(current_player):
-                # Check if the current player was removed from the game
-                if current_player not in player_order:
-                    current_player = get_next_player(current_player)  # Find next player
-                else:
-                    current_player = get_next_player(current_player)  # Ensure to get the next player correctly
+            # AI plays only if they have cards
+            if current_player and ai_play(current_player):
+                current_player = get_next_player(current_player)  # Update player only when AI turn is complete
+                draw_game()
+                pygame.time.wait(500)  # Add a small delay for visual clarity
 
-            draw_game()
-            pygame.time.wait(500)  # Add a small delay for visual clarity 
+    # If game ends normally, return to main menu
+    if not game_started:
+        show_menu = True
+        pygame.display.set_caption("Main Menu")
+        draw_menu()
+
+    # Return to the main menu after all rounds are completed
+    show_menu = True
+    game_started = False
+    pygame.display.set_caption("Main Menu")
+    draw_menu()
             
 def can_play_card(card):
+    global last_player_finished
+
+    # If the previous player just finished their cards, allow any card
+    if last_player_finished:
+        # Reset the flag after checking for this turn, but keep it for the entire turn of the next player
+        last_player_finished = False  
+        return True
+
     if not played_cards:  # If no cards have been played yet
         return True
-        
+
     last_played = played_cards[-1]
-    
+    last_rank = last_played.split('_')[0]
+
+    # If last card was a 2 or joker, any card can be played
+    if last_rank == '2' or 'joker' in last_played:
+        return True
+
     # Get the ranks of the cards
     current_rank = card.split('_')[0]
-    last_rank = last_played.split('_')[0]
-    
+
     # Handle jokers (they can be played on anything)
     if 'joker' in card:
         return True
-        
-    # Handle playing on jokers (only 2s can be played on jokers)
-    if 'joker' in last_played:
-        return current_rank == '2'
-        
+
     # Handle 2s (can be played on anything except jokers)
     if current_rank == '2':
         return True
-        
+
     # Get the numerical values of the ranks for comparison
     current_value = card_order.get(current_rank, 0)
     last_value = card_order.get(last_rank, 0)
-    
+
     # Allow cards of the same rank or higher
     return current_value >= last_value
 
@@ -1141,21 +1181,29 @@ def play_card(player, cards):
     return False  # Invalid play
 
 def end_round():
-    global current_player, played_cards, player_order, player_roles
-    played_cards = []
-    current_player = player_order[0]
+    global current_player, played_cards, player_order, player_roles, game_started, rounds_played, hands, show_menu
     
+    # Check if all players have been assigned ranks
     if len(player_roles) == num_players:
-        assign_roles()
+        # Perform card exchange
         exchange_cards()
+        
+        # Increment rounds played
+        rounds_played += 1
+        
+        if rounds_played >= rounds:
+            game_started = False
+            show_menu = True
+            pygame.display.set_caption("Main Menu")
+            draw_menu()  # Show the main menu directly
+            return  # Exit the function to go back to the main menu
+
+        # Start new round
         start_new_round()
-
-def assign_roles():
-    global player_roles
-    for player, role in zip(sorted(player_roles, key=player_roles.get), roles):
-        player_roles[player] = role
-    set_message("Roles assigned: " + ", ".join([f"{player}: {role}" for player, role in player_roles.items()]))
-
+    else:
+        # If not all players have been ranked, this round isn't fully completed
+        set_message("Round not fully completed. Check player roles.")
+        
 def exchange_cards():
     global hands, player_roles
     president = [player for player, role in player_roles.items() if role == 'President'][0]
@@ -1174,25 +1222,59 @@ def exchange_cards():
     hands[president].extend(best_cards)
     
     # Vice President gives their one worst card to Vice Bum
-    worst_card = sorted(hands[vice_president], key=card_sort_key)[0]
-    hands[vice_president] = hands[vice_president][1:]
-    hands[vice_bum].append(worst_card)
+    if len(hands[vice_president]) > 0:
+        worst_card = sorted(hands[vice_president], key=card_sort_key)[0]
+        hands[vice_president] = hands[vice_president][1:]
+        hands[vice_bum].append(worst_card)
+    else:
+        worst_card = None
     
     # Vice Bum gives their one best card to Vice President
-    best_card = sorted(hands[vice_bum], key=card_sort_key)[-1]
-    hands[vice_bum] = hands[vice_bum][:-1]
-    hands[vice_president].append(best_card)
+    if len(hands[vice_bum]) > 0:
+        best_card = sorted(hands[vice_bum], key=card_sort_key)[-1]
+        hands[vice_bum] = hands[vice_bum][:-1]
+        hands[vice_president].append(best_card)
+    else:
+        best_card = None
     
     set_message(f"{president} gave {worst_cards} to {bum}. {bum} gave {best_cards} to {president}. {vice_president} gave {worst_card} to {vice_bum}. {vice_bum} gave {best_card} to {vice_president}.")
     
 def start_new_round():
-    global hands, current_player, played_cards, player_order, player_roles
+    global hands, current_player, played_cards, player_order, player_roles, three_of_clubs_played
+    
+    # Clear the screen
+    screen.blit(play_background, (0, 0))
+    pygame.display.flip()
+    
+    # Deal new cards
     hands = deal_deck()
-    current_player = 'President' if 'Bum' not in player_roles else [player for player, role in player_roles.items() if role == 'Bum'][0]
+    
+    # Reset game state
     played_cards = []
-    player_order = ['User', 'Player 3', 'Player 1', 'Player 2', 'Player 4']
     player_roles = {}
-    set_message(f"New round started! {current_player}'s turn.")
+    three_of_clubs_played = False
+    
+    # Determine starting player (Bum from previous round, if available)
+    if rounds_played > 0:
+        previous_bum = [player for player, role in player_roles.items() if role == "Bum"]
+        if previous_bum:
+            current_player = previous_bum[0]
+        else:
+            current_player = player_with_three_of_clubs(hands) or player_order[0]
+    else:
+        current_player = player_with_three_of_clubs(hands) or player_order[0]
+    
+    # Reset player order
+    player_order = ['User', 'Player 3', 'Player 1', 'Player 2', 'Player 4']
+    
+    set_message(f"Round {rounds_played + 1} started! {current_player}'s turn.")
+    
+    # If starting player has 3 of clubs, play it automatically
+    if current_player and '3_of_clubs' in hands[current_player]:
+        animate_three_of_clubs_to_center()
+    else:
+        draw_game()
+
 
 theme = pm.themes.THEME_DARK.copy()
 theme.widget_font = 'Arial'  # Replace with a font supporting Unicode
@@ -1366,24 +1448,7 @@ while True:
                         signup_username_text = signup_password_text = ''
                         signup_message = ''
                         active_field = None
-                        
-        if game_started:
-            if event.type == pygame.MOUSEBUTTONDOWN:
-                mouse_pos = pygame.mouse.get_pos()
-                if handle_mouse_click(mouse_pos, hands, current_player):  # Pass hands and current_player
-                    # Set the next player in clockwise order
-                    next_player_index = (player_order.index(current_player) + 1) % len(player_order) 
-                    current_player = player_order[next_player_index]
-                    set_message(f"{current_player}'s turn.")
-            
-            while current_player != 'User':
-                # ai_play(current_player)
-                draw_game()  # Redraw the game state after each AI turn
-                pygame.time.wait(1000)  # Add a delay to make AI turns visible
-                next_player_index = (player_order.index(current_player) + 1) % len(player_order)
-                current_player = player_order[next_player_index]
-                set_message(f"{current_player}'s turn.")
-                             
+                          
 # Handle keyboard input for active fields
         if event.type == pygame.KEYDOWN:
             if active_field == 'username':
