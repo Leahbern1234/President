@@ -325,26 +325,26 @@ def draw_menu():
     pygame.display.flip()
 
 # Handle mouse clicks to make icons and text clickable
-def handle_menu_click(mouse_pos):
-    global menu_selected
-    # Define the X position for icons and text (similar to draw_menu)
-    icon_x_position = screen.get_width() // 2 - 150
-    text_x_position = icon_x_position + 80
-
+def handle_menu_click(pos):
+    global menu_selected, game_started, show_menu
+    
     for i, option in enumerate(menu_options):
         option_width, option_height = font_bold_medium.size(option)
-        icon_width, icon_height = menu_icons[i].get_size()
-
-        y_position = 250 + i * 100
-
-        # Create clickable rectangles for both icon and text
-        icon_rect = pygame.Rect(icon_x_position, y_position, icon_width, icon_height)
-        text_rect = pygame.Rect(text_x_position, y_position, option_width, option_height)
-
-        # Check if the mouse clicked on the icon or text
-        if icon_rect.collidepoint(mouse_pos) or text_rect.collidepoint(mouse_pos):
-            menu_selected = option  # Set the selected menu option
-            break
+        option_rect = pygame.Rect(
+            screen.get_width() // 2 - option_width // 2 - 10,
+            250 + i * 100,
+            option_width + 20,
+            option_height + 10
+        )
+        
+        if option_rect.collidepoint(pos):
+            if option == "Play":
+                # Start the game directly with default settings
+                show_menu = False
+                game_started = True
+                start_game()
+            else:
+                menu_selected = option
 
 # Function to handle hover detection
 def check_hover():
@@ -384,7 +384,7 @@ def draw_selected_screen(selection):
         screen.blit(selected_surface, (screen.get_width() // 2 - selected_surface.get_width() // 2, screen.get_height() // 2))
 
     # Display the back button for all screens
-    screen.blit(back_button_resized, back_button_rect.topleft) 
+    screen.blit(back_button_resized, back_button_rect.topleft)
     pygame.display.flip()
     
 # Menu Option Icons
@@ -588,6 +588,10 @@ selected_card = None
 def draw_game():
     screen.blit(play_background, (0, 0))
 
+    # Ensure hands is initialized
+    if hands is None:
+        return  # Exit the function if hands is not initialized
+
     # Sort each player's cards using card_sort_key
     for player, cards in hands.items():
         cards.sort(key=card_sort_key)  # Sort cards before displaying
@@ -742,7 +746,11 @@ def assign_rank(player):
 last_player_finished = False  # Add this global variable
 
 def get_next_player(current_player):
-    global last_player_finished, player_order
+    global last_player_finished, player_order, hands
+    
+    # Ensure hands is initialized
+    if hands is None:
+        return None  # No hands available, cannot proceed
     
     if current_player not in player_order:
         current_player = player_order[0] if player_order else None
@@ -752,7 +760,12 @@ def get_next_player(current_player):
         next_index = (current_index + 1) % len(player_order)
         next_player = player_order[next_index]
         
-        if not hands[next_player]:  # Check if the next player has no cards
+        # Ensure next_player is a valid key in hands
+        if next_player not in hands:
+            return None  # Invalid player, cannot proceed
+        
+        # Check if the next player has no cards
+        if not hands[next_player]:  
             rank = assign_rank(next_player)
             player_order.remove(next_player)
             last_player_finished = True
@@ -771,7 +784,7 @@ def handle_mouse_click(pos, hands):
         button_rect = pygame.Rect(screen_width // 2 - 60, screen_height - 330, 80, 40)
         if button_rect.collidepoint(pos):
             if selected_card:  # If a card is selected, this is a "Play" button
-                if can_play_card(selected_card) or last_player_finished:
+                if can_play_card(selected_card) or pass_count >= len(player_order) - 1:
                     animate_card_to_center(selected_card)  # Animate the card to the center
                     current_message = f"User played {selected_card}!"
                     
@@ -985,24 +998,40 @@ def ai_play(player):
     return True
 
 def start_game():
-    global user_id, game_started, hands, current_player, played_cards, player_roles, selected_cards, pass_count, rounds_played, show_menu, three_of_clubs_played
-    
+    global user_id, game_started, hands, current_player, played_cards
+    global player_roles, selected_cards, pass_count, rounds_played, show_menu
+
     if 'user_id' not in globals():
         user_id = GUEST_USER_ID
-        
+
     save_game_preferences(user_id, rounds, selected_difficulty)
 
     rounds_played = 0  # Reset rounds played at the start of the game
     game_started = True
 
+    # Close the preferences menu
+    preferences_menu.disable()
+
+    # Initialize hands by dealing the deck
+    hands = deal_deck()  # Ensure hands is initialized before starting the game
+
+    # Reset game state
+    played_cards = []
+    player_roles = {}
+    selected_cards = []
+    pass_count = 0
+    current_player = None
+    three_of_clubs_played = False
+    last_player_finished = False
+
     # Start the first round
     start_new_round()
-    
+
     while game_started and rounds_played < rounds:
         set_message(f"{current_player}'s turn.")
         pygame.display.set_caption("Game")
         draw_game()
-        
+
         if current_player == 'User':
             turn_completed = False
             while not turn_completed and game_started:
@@ -1010,31 +1039,24 @@ def start_game():
                     if event.type == pygame.QUIT:
                         pygame.quit()
                         return
-                    
+
                     if event.type == pygame.MOUSEBUTTONDOWN:
                         mouse_pos = pygame.mouse.get_pos()
                         turn_completed = handle_mouse_click(mouse_pos, hands)
                         if turn_completed:
-                            current_player = get_next_player(current_player)  # Update player only when turn is confirmed complete
+                            current_player = get_next_player(current_player)
 
         else:
             # AI plays only if they have cards
             if current_player and ai_play(current_player):
-                current_player = get_next_player(current_player)  # Update player only when AI turn is complete
+                current_player = get_next_player(current_player)
                 draw_game()
-                pygame.time.wait(500)  # Add a small delay for visual clarity
+                pygame.time.wait(500)
 
-    # If game ends normally, return to main menu
-    if not game_started:
-        show_menu = True
-        pygame.display.set_caption("Main Menu")
-        draw_menu()
-
-    # Return to the main menu after all rounds are completed
+    # When game ends (all rounds completed), return to main menu
     show_menu = True
     game_started = False
     pygame.display.set_caption("Main Menu")
-    draw_menu()
             
 def can_play_card(card):
     global last_player_finished
@@ -1180,8 +1202,72 @@ def play_card(player, cards):
 
     return False  # Invalid play
 
+# Function to show end game options
+def show_end_game_options():
+    global show_menu, game_started, menu_selected
+
+    # Create a semi-transparent overlay
+    overlay = pygame.Surface((screen_width, screen_height))
+    overlay.fill((0, 0, 0))
+    overlay.set_alpha(128)
+    screen.blit(overlay, (0, 0))
+
+    # Create message box
+    message_box_width = 600
+    message_box_height = 300
+    message_box = pygame.Surface((message_box_width, message_box_height))
+    message_box.fill((255, 255, 255))
+
+    # Position the message box in the center
+    box_x = (screen_width - message_box_width) // 2
+    box_y = (screen_height - message_box_height) // 2
+
+    # Render the message text
+    message = "Game Over! What would you like to do next?"
+    text_surface = font_bold_medium.render(message, True, (0, 0, 0))
+    text_rect = text_surface.get_rect(center=(message_box_width // 2, 50))
+    message_box.blit(text_surface, text_rect)
+
+    # Define option buttons
+    play_again_button_rect = pygame.Rect((message_box_width - 200) // 2, 100, 200, 50)
+    main_menu_button_rect = pygame.Rect((message_box_width - 200) // 2, 200, 200, 50)
+
+    # Render button text
+    play_again_text = font_bold_small.render("Play Again", True, (255, 255, 255))
+    main_menu_text = font_bold_small.render("Main Menu", True, (255, 255, 255))
+
+    # Draw buttons
+    pygame.draw.rect(message_box, (0, 128, 0), play_again_button_rect)
+    pygame.draw.rect(message_box, (128, 0, 0), main_menu_button_rect)
+    message_box.blit(play_again_text, (play_again_button_rect.x + 20, play_again_button_rect.y + 10))
+    message_box.blit(main_menu_text, (main_menu_button_rect.x + 20, main_menu_button_rect.y + 10))
+
+    # Draw the message box on screen
+    screen.blit(message_box, (box_x, box_y))
+    pygame.display.flip()
+
+    # Wait for user input
+    waiting_for_input = True
+    while waiting_for_input:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                exit()
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                mouse_pos = pygame.mouse.get_pos()
+                if play_again_button_rect.collidepoint(mouse_pos[0] - box_x, mouse_pos[1] - box_y):
+                    waiting_for_input = False
+                    draw_game_preferences()
+                elif main_menu_button_rect.collidepoint(mouse_pos[0] - box_x, mouse_pos[1] - box_y):
+                    waiting_for_input = False
+                    show_menu = True  # This is the crucial line
+                    game_started = False
+                    menu_selected = None
+                    pygame.display.set_caption("Main Menu")
+                    draw_menu()  # Now draw the menu!
+                    
 def end_round():
-    global current_player, played_cards, player_order, player_roles, game_started, rounds_played, hands, show_menu
+    global current_player, played_cards, player_order, player_roles, game_started, rounds_played, hands, show_menu, menu_selected, current_message
     
     # Check if all players have been assigned ranks
     if len(player_roles) == num_players:
@@ -1193,13 +1279,11 @@ def end_round():
         
         if rounds_played >= rounds:
             game_started = False
-            show_menu = True
-            pygame.display.set_caption("Main Menu")
-            draw_menu()  # Show the main menu directly
-            return  # Exit the function to go back to the main menu
-
-        # Start new round
-        start_new_round()
+            current_message = ""  # Clear the message at the end of the game
+            show_end_game_options()  # Show end game options
+        else:
+            # Start new round
+            start_new_round()
     else:
         # If not all players have been ranked, this round isn't fully completed
         set_message("Round not fully completed. Check player roles.")
@@ -1274,8 +1358,7 @@ def start_new_round():
         animate_three_of_clubs_to_center()
     else:
         draw_game()
-
-
+        
 theme = pm.themes.THEME_DARK.copy()
 theme.widget_font = 'Arial'  # Replace with a font supporting Unicode
 preferences_menu = pm.Menu(title="Game Preferences", width=700, height=600, theme=theme)
@@ -1304,6 +1387,7 @@ def draw_background():
 # Main loop to display the preferences menu
 def draw_game_preferences():
     pygame.display.set_caption("Game Preferences")
+    preferences_menu.enable()  # Ensure the menu is enabled
     preferences_menu.mainloop(screen, bgfun=draw_background)
  
 # Main loop
@@ -1499,7 +1583,7 @@ while True:
         pygame.display.set_caption("Game")
         draw_game()
         continue
-    elif show_menu:
+    if show_menu:
         if menu_selected:
             draw_selected_screen(menu_selected)
         else:
