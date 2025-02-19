@@ -1213,7 +1213,7 @@ def show_end_game_options():
     screen.blit(overlay, (0, 0))
 
     # Create message box
-    message_box_width = 600
+    message_box_width = 700
     message_box_height = 300
     message_box = pygame.Surface((message_box_width, message_box_height))
     message_box.fill((255, 255, 255))
