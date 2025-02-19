@@ -748,33 +748,36 @@ last_player_finished = False  # Add this global variable
 def get_next_player(current_player):
     global last_player_finished, player_order, hands
     
-    # Ensure hands is initialized
-    if hands is None:
-        return None  # No hands available, cannot proceed
+    # Define the desired order
+    desired_order = ['User', 'Player 3', 'Player 1', 'Player 2', 'Player 4']
     
-    if current_player not in player_order:
-        current_player = player_order[0] if player_order else None
+    # If current player is None, start with the first valid player
+    if current_player is None:
+        for player in desired_order:
+            if player in player_order and hands[player]:
+                return player
+        return None
+
+    # Get the current index in desired_order
+    try:
+        current_index = desired_order.index(current_player)
+    except ValueError:
+        # If current player not in desired_order, start from beginning
+        current_index = -1
+
+    # First try players after the current player
+    for i in range(current_index + 1, len(desired_order)):
+        next_player = desired_order[i]
+        if next_player in player_order and hands[next_player] and len(hands[next_player]) > 0:
+            return next_player
     
-    while current_player in player_order:
-        current_index = player_order.index(current_player)
-        next_index = (current_index + 1) % len(player_order)
-        next_player = player_order[next_index]
-        
-        # Ensure next_player is a valid key in hands
-        if next_player not in hands:
-            return None  # Invalid player, cannot proceed
-        
-        # Check if the next player has no cards
-        if not hands[next_player]:  
-            rank = assign_rank(next_player)
-            player_order.remove(next_player)
-            last_player_finished = True
-            if not player_order:
-                return None  # No more players left
-        else:
-            return next_player  # Return the first player with cards left
+    # If no player found after current player, wrap around to the beginning
+    for i in range(0, current_index + 1):
+        next_player = desired_order[i]
+        if next_player in player_order and hands[next_player] and len(hands[next_player]) > 0:
+            return next_player
     
-    return None  # If no players are left with cards
+    return None
 
 def handle_mouse_click(pos, hands):
     global selected_card, played_cards, current_message, pass_count, current_player, last_player_finished
@@ -1213,7 +1216,7 @@ def show_end_game_options():
     screen.blit(overlay, (0, 0))
 
     # Create message box
-    message_box_width = 700
+    message_box_width = 1000
     message_box_height = 300
     message_box = pygame.Surface((message_box_width, message_box_height))
     message_box.fill((255, 255, 255))
